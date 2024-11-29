@@ -1,4 +1,3 @@
-//음원o
 ﻿#include <windows.h>
 #include <windowsx.h>
 #include <math.h>
@@ -75,8 +74,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
 
-    PlayBackgroundMusic();
-
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
@@ -87,47 +84,51 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     return (int)msg.wParam;
 }
 
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE:
-        // "게임 시작" 버튼 생성
         hStartButton = CreateWindow(
             L"BUTTON", L"게임 시작",
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            350, 250, 100, 50, // 위치 및 크기
+            350, 250, 100, 50,
             hWnd, (HMENU)1, GetModuleHandle(NULL), NULL);
         break;
     case WM_COMMAND:
-        if (LOWORD(wParam) == 1) { // "게임 시작" 버튼 클릭
-            DestroyWindow(hStartButton);
-            SetTimer(hWnd, 1, 4, NULL);
-            isGameStarted = true;
-            SetWindowText(hWnd, L"리듬 게임");
+        if (LOWORD(wParam) == 1) { // 게임 시작 버튼이 눌렸을 때
+            DestroyWindow(hStartButton); // 시작 버튼 제거
+            SetTimer(hWnd, 1, 4, NULL); // 애니메이션 타이머 설정
+            isGameStarted = true; // 게임 시작 상태로 변경
+            SetWindowText(hWnd, L"리듬 게임"); // 윈도우 제목 변경
+
+            PlayBackgroundMusic(); // **음악 재생**
         }
         break;
-    case WM_PAINT:
-    {
+    case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
         if (isGameStarted) {
             DrawGame(hdc);
         }
         else {
-            // 대기 화면 배경
             RECT clientRect;
             GetClientRect(hWnd, &clientRect);
             HBRUSH hBackgroundBrush = CreateSolidBrush(RGB(30, 30, 30));
             FillRect(hdc, &clientRect, hBackgroundBrush);
             DeleteObject(hBackgroundBrush);
-
         }
         EndPaint(hWnd, &ps);
     }
-    break;
+                 break;
     case WM_TIMER:
         if (isGameStarted) {
             UpdatePositions();
             InvalidateRect(hWnd, NULL, FALSE);
+        }
+        break;
+    case WM_KEYDOWN:
+        if (isGameStarted && wParam == VK_SPACE) {
+            PlayBackgroundMusic();
         }
         break;
     case WM_DESTROY:
