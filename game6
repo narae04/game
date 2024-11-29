@@ -1,4 +1,4 @@
-// 기준선 위치 조정
+// 기준선 변경
 
 #include <windows.h>
 #include <windowsx.h>
@@ -10,13 +10,13 @@
 #define CIRCLE_RADIUS 30
 #define BLOCK_WIDTH 100
 #define BLOCK_HEIGHT 100
-#define ANIMATION_SPEED 0.229375f // 애니메이션 속도 조절
+#define ANIMATION_SPEED 0.06f // 애니메이션 속도 조절
 #define SCREEN_SPEED 6.0f // 화면 이동 속도 조절
 
 HBITMAP hBackgroundBitmap = NULL;
 bool isMusicPlaying = false;
 bool isGameStarted = false;
-bool isAnimating = false; // 애니메이션 상태 변수
+bool isAnimating = false; 
 
 struct CircleState {
     float x, y;
@@ -241,13 +241,21 @@ void DrawGame(HDC hdc) {
         }
     }
 
-    // 기준선 위치
-    int lineY = height / 2 + 20; // 2에서 +20만큼 아래로 이동
-    HPEN hLinePen = CreatePen(PS_SOLID, 10, RGB(255, 255, 255)); // 선 굵기 1
-    HPEN hOldPenLine = (HPEN)SelectObject(hMemDC, hLinePen);
-    MoveToEx(hMemDC, 0, lineY, NULL);
-    LineTo(hMemDC, width, lineY); // 가로선 그리기
-    SelectObject(hMemDC, hOldPenLine);
+    // 기준선 그리기 (두 개의 선)
+    int lineY1 = height / 2 + 10; // 첫 번째 선 위치 (중앙 위)
+    int lineY2 = height / 2 + 30; // 두 번째 선 위치 (중앙 아래)
+    HPEN hLinePen = CreatePen(PS_SOLID, 5, RGB(255, 255, 255)); // 선 굵기 10
+    HPEN hOldPen = (HPEN)SelectObject(hMemDC, hLinePen);
+
+    // 첫 번째 선
+    MoveToEx(hMemDC, 0, lineY1, NULL);
+    LineTo(hMemDC, width, lineY1);
+
+    // 두 번째 선
+    MoveToEx(hMemDC, 0, lineY2, NULL);
+    LineTo(hMemDC, width, lineY2);
+
+    SelectObject(hMemDC, hOldPen);
     DeleteObject(hLinePen);
 
     // 최종적으로 화면에 출력
