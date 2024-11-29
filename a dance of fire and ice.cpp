@@ -1,3 +1,4 @@
+//음원o
 ﻿#include <windows.h>
 #include <windowsx.h>
 #include <math.h>
