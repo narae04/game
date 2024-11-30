@@ -1,0 +1,413 @@
+//게임오버, miss 개수 제한 구현
+#include <windows.h>
+#include <windowsx.h>
+#include <math.h>
+#include <mmsystem.h>
+#include <string>
+#include <iostream>
+#include <vector>
+#pragma comment(lib, "winmm.lib")
+
+#define CIRCLE_RADIUS 30
+#define BLOCK_WIDTH 100
+#define BLOCK_HEIGHT 100
+#define ANIMATION_SPEED 0.15f
+#define SCREEN_SPEED 3.0f
+#define BPM 120.0f
+#define BEATS_PER_MEASURE 4
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 600
+
+HBITMAP hBackgroundBitmap = NULL;
+bool isMusicPlaying = false;
+bool isGameStarted = false;
+bool isAnimating = false;
+bool isTopCircleTurn = true;
+float currentTimeTop = 0.0f;
+float currentTimeBottom = 0.0f;
+bool gameOver = false;
+bool waitingForSpaceBar = false;
+int missCount = 0;
+bool gameClear = false;
+
+struct CircleState {
+    float x, y;
+    float targetY;
+    float startY;
+    float progress;
+    bool isMovingToCenter;
+    bool isWaitingAtCenter;
+    float speed;
+    bool isActive;
+};
+
+struct Marker {
+    float x, y;
+    float timeAlive;
+    bool isActive;
+    std::string result;
+};
+
+CircleState topCircle = { 400, CIRCLE_RADIUS, 300, CIRCLE_RADIUS, 0, true, false, 0.06f, true };
+CircleState bottomCircle = { 400, 600 - CIRCLE_RADIUS, 300, 600 - CIRCLE_RADIUS, 0, true, false, 0.12f, false };
+
+POINT center = { 400, 300 };
+HWND hWnd;
+HWND hStartButton;
+HWND hGameOverButton;
+int currentBlock = 0;
+float screenOffset = 0;
+std::vector<Marker> markers;
+
+int lineY1 = 230;
+int lineY2 = 375;
+
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+void DrawGame(HDC hdc);
+void UpdatePositions();
+float EaseInOutQuad(float t);
+void PlayBackgroundMusic();
+void LoadBackgroundImage();
+void StartGame();
+void GameOver();
+
+void LoadBackgroundImage() {
+    hBackgroundBitmap = (HBITMAP)LoadImage(NULL, L"bg.jpg", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+}
+
+void PlayBackgroundMusic() {
+    PlaySound(NULL, 0, 0); // 기존 음악 중단
+    PlaySound(L"./onrepeat_1.wav", NULL, SND_FILENAME | SND_ASYNC | SND_LOOP);
+    isMusicPlaying = true;
+}
+
+float EaseInOutQuad(float t) {
+    return t < 0.5f ? 2.0f * t * t : 1.0f - pow(-2.0f * t + 2.0f, 2.0f) / 2.0f;
+}
+
+bool IsHitWithLine(float circleY, float lineY1, float lineY2, float radius) {
+    float top = circleY - radius;
+    float bottom = circleY + radius;
+    return (top <= lineY2 && bottom >= lineY1) || (top <= lineY1 && bottom >= lineY1) || (top <= lineY2 && bottom >= lineY2);
+}
+
+bool CheckHit(float circleY) {
+    // 판정 구역 내부에 있을 때만 hit
+    return (circleY > lineY1 && circleY < lineY2);
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    WNDCLASSEX wcex = { sizeof(WNDCLASSEX) };
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = WndProc;
+    wcex.hInstance = hInstance;
+    wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wcex.lpszClassName = L"AnimationWindowClass";
+
+    if (!RegisterClassEx(&wcex)) return 0;
+
+    LoadBackgroundImage();
+
+    hWnd = CreateWindow(L"AnimationWindowClass", L"대기화면", WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, NULL, NULL, hInstance, NULL);
+
+    if (!hWnd) return 0;
+
+    ShowWindow(hWnd, nCmdShow);
+    UpdateWindow(hWnd);
+
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    if (hBackgroundBitmap) DeleteObject(hBackgroundBitmap);
+    return (int)msg.wParam;
+}
+
+void StartGame() {
+    DestroyWindow(hStartButton);
+    if (hGameOverButton) DestroyWindow(hGameOverButton);
+    SetTimer(hWnd, 1, 16, NULL);
+    isGameStarted = true;
+    gameOver = false;
+    waitingForSpaceBar = true;
+    SetWindowText(hWnd, L"리듬 게임 - 스페이스바를 눌러 시작하세요");
+
+    topCircle.y = CIRCLE_RADIUS;
+    topCircle.startY = CIRCLE_RADIUS;
+    topCircle.targetY = 300;  // 중앙 위치로 설정
+    topCircle.progress = 0;
+    topCircle.isMovingToCenter = true;
+    topCircle.isWaitingAtCenter = false;
+    topCircle.isActive = true;
+
+    bottomCircle.y = 600 - CIRCLE_RADIUS;
+    bottomCircle.startY = 600 - CIRCLE_RADIUS;
+    bottomCircle.targetY = 300;  // 중앙 위치로 설정
+    bottomCircle.progress = 0;
+    bottomCircle.isMovingToCenter = true;
+    bottomCircle.isWaitingAtCenter = false;
+    bottomCircle.isActive = false;
+
+    markers.clear();
+    currentTimeTop = 0.0f;
+    currentTimeBottom = 0.0f;
+    missCount = 0;
+    gameClear = false;
+}
+
+void GameOver() {
+    if (!gameOver) {
+        KillTimer(hWnd, 1);
+        isGameStarted = false;
+        gameOver = true;
+
+        // 음악 중단
+        PlaySound(NULL, 0, 0);
+
+        if (hGameOverButton == NULL) {
+            hGameOverButton = CreateWindow(
+                L"BUTTON", L"Game Over",
+                WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+                350, 250, 100, 50,
+                hWnd, (HMENU)2, GetModuleHandle(NULL), NULL);
+        }
+    }
+    else {
+        // 버튼이 이미 존재하면 위치와 크기 등을 다시 설정
+        SetWindowPos(hGameOverButton, HWND_TOP, 350, 250, 100, 50, SWP_NOZORDER | SWP_SHOWWINDOW);
+    }
+}
+
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_CREATE:
+        hStartButton = CreateWindow(
+            L"BUTTON", L"게임 시작",
+            WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+            350, 250, 100, 50,
+            hWnd, (HMENU)1, GetModuleHandle(NULL), NULL);
+        break;
+    case WM_COMMAND:
+        if (LOWORD(wParam) == 1) {
+            StartGame();
+        }
+        else if (LOWORD(wParam) == 2) {
+            StartGame();
+        }
+        break;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+
+        // 게임 시작 화면일 때와 게임 진행 중인 화면의 배경을 연한 핑크로 설정
+        RECT clientRect;
+        GetClientRect(hWnd, &clientRect);
+        HBRUSH hBrush = CreateSolidBrush(RGB(0, 0, 0));  // 검정색
+        FillRect(hdc, &clientRect, hBrush);
+        DeleteObject(hBrush);
+
+        // 게임이 시작되었거나 게임 오버 상태일 때, 게임을 그리도록 처리
+        if (isGameStarted || gameOver) {
+            DrawGame(hdc);
+        }
+        EndPaint(hWnd, &ps);
+    }
+                 break;
+    case WM_TIMER:
+        if (isGameStarted && !waitingForSpaceBar) {
+            UpdatePositions();
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        break;
+    case WM_KEYDOWN:
+        if (isGameStarted && wParam == VK_SPACE) {
+            if (waitingForSpaceBar) {
+                waitingForSpaceBar = false;
+                PlayBackgroundMusic();
+                SetWindowText(hWnd, L"리듬 게임");
+            }
+            else {
+                float currentY = isTopCircleTurn ? topCircle.y : bottomCircle.y;
+                Marker newMarker = { isTopCircleTurn ? topCircle.x : bottomCircle.x, currentY, 0.0f, true, "" };
+
+                if (CheckHit(currentY)) {
+                    newMarker.result = "hit";
+                }
+                else {
+                    newMarker.result = "miss";
+                    missCount++;
+                }
+
+                markers.push_back(newMarker);
+
+                if (missCount >= 10) {
+                    GameOver();
+                }
+            }
+        }
+        break;
+    case WM_DESTROY:
+        KillTimer(hWnd, 1);
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+void DrawGame(HDC hdc) {
+    RECT clientRect;
+    GetClientRect(hWnd, &clientRect);
+    int width = clientRect.right - clientRect.left;
+    int height = clientRect.bottom - clientRect.top;
+
+    HDC hMemDC = CreateCompatibleDC(hdc);
+    HBITMAP hBufferBitmap = CreateCompatibleBitmap(hdc, width, height);
+    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hMemDC, hBufferBitmap);
+
+    // 배경 색상: 검정색으로 설정
+    HBRUSH hBackgroundBrush = CreateSolidBrush(RGB(0, 0, 0)); // 검정색
+    FillRect(hMemDC, &clientRect, hBackgroundBrush);
+    DeleteObject(hBackgroundBrush);
+
+    // 원 그리기 (topCircle, bottomCircle)
+    HBRUSH hBrushTop = CreateSolidBrush(RGB(255, 0, 0));
+    HBRUSH hOldBrushTop = (HBRUSH)SelectObject(hMemDC, hBrushTop);
+    Ellipse(hMemDC,
+        (int)(topCircle.x - CIRCLE_RADIUS),
+        (int)(topCircle.y - CIRCLE_RADIUS),
+        (int)(topCircle.x + CIRCLE_RADIUS),
+        (int)(topCircle.y + CIRCLE_RADIUS));
+    SelectObject(hMemDC, hOldBrushTop);
+    DeleteObject(hBrushTop);
+
+    HBRUSH hBrushBottom = CreateSolidBrush(RGB(0, 0, 255));
+    HBRUSH hOldBrushBottom = (HBRUSH)SelectObject(hMemDC, hBrushBottom);
+    Ellipse(hMemDC,
+        (int)(bottomCircle.x - CIRCLE_RADIUS),
+        (int)(bottomCircle.y - CIRCLE_RADIUS),
+        (int)(bottomCircle.x + CIRCLE_RADIUS),
+        (int)(bottomCircle.y + CIRCLE_RADIUS));
+    SelectObject(hMemDC, hOldBrushBottom);
+    DeleteObject(hBrushBottom);
+
+    // 라인 그리기
+    HPEN hLinePen = CreatePen(PS_SOLID, 5, RGB(255, 255, 255));
+    HPEN hOldPen = (HPEN)SelectObject(hMemDC, hLinePen);
+
+    MoveToEx(hMemDC, 0, lineY1, NULL);
+    LineTo(hMemDC, width, lineY1);
+
+    MoveToEx(hMemDC, 0, lineY2, NULL);
+    LineTo(hMemDC, width, lineY2);
+
+    SelectObject(hMemDC, hOldPen);
+    DeleteObject(hLinePen);
+
+    // 마커 그리기
+    bool firstText = true;
+    for (auto& marker : markers) {
+        if (marker.timeAlive < 5.0f) {
+            HBRUSH hMarkerBrush = CreateSolidBrush(RGB(255, 255, 0));
+            HBRUSH hOldMarkerBrush = (HBRUSH)SelectObject(hMemDC, hMarkerBrush);
+            Ellipse(hMemDC,
+                (int)(marker.x - 10),
+                (int)(marker.y - 10),
+                (int)(marker.x + 10),
+                (int)(marker.y + 10));
+            SelectObject(hMemDC, hOldMarkerBrush);
+            DeleteObject(hMarkerBrush);
+
+            std::wstring resultText = L"Result: " + std::wstring(marker.result.begin(), marker.result.end());
+
+            if (marker.result == "hit") {
+                SetTextColor(hMemDC, RGB(0, 255, 0));
+            }
+            else if (marker.result == "miss") {
+                SetTextColor(hMemDC, RGB(255, 0, 0));
+            }
+
+            SetTextColor(hMemDC, RGB(255, 255, 255));
+            SetBkMode(hMemDC, TRANSPARENT);
+            std::wstring missText = L"Misses: " + std::to_wstring(missCount);
+            TextOutW(hMemDC, SCREEN_WIDTH - 100, 10, missText.c_str(), missText.length());
+
+            int fixedXPosition = 10;
+            int fixedYPosition = 10;
+
+            if (gameClear) {
+                SetTextColor(hMemDC, RGB(0, 255, 0));
+                TextOutW(hMemDC, SCREEN_WIDTH / 2 - 50, SCREEN_HEIGHT / 2, L"Game Clear!", 11);
+            }
+        }
+    }
+
+    BitBlt(hdc, 0, 0, width, height, hMemDC, 0, 0, SRCCOPY);
+
+    SelectObject(hMemDC, hOldBitmap);
+    DeleteObject(hBufferBitmap);
+    DeleteDC(hMemDC);
+}
+
+
+void UpdatePositions() {
+    screenOffset += SCREEN_SPEED;
+
+    float secondsPerBeat = 60.0f / BPM;
+    float secondsPerMeasure = secondsPerBeat * BEATS_PER_MEASURE;
+
+    // 마커 업데이트
+    for (auto it = markers.begin(); it != markers.end();) {
+        it->timeAlive += 0.016f;
+        it->x -= SCREEN_SPEED; // 화면을 가로로 이동
+
+        if (it->x < -10 || it->x > 800 + 10 || it->timeAlive > 5.0f) {
+            it = markers.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+
+    // 상단 원 (topCircle) 업데이트
+    currentTimeTop += ANIMATION_SPEED;
+    if (currentTimeTop >= secondsPerMeasure) {
+        currentTimeTop = 0.0f;
+        isTopCircleTurn = !isTopCircleTurn;  // 상단 원과 하단 원이 엇박으로 움직이게끔 조정
+    }
+
+    // EaseInOutQuad를 이용한 위치 보정
+    float easedProgressTop = EaseInOutQuad(currentTimeTop / secondsPerMeasure);
+    if (isTopCircleTurn) {
+        topCircle.y = topCircle.startY + (topCircle.targetY - topCircle.startY) * easedProgressTop;
+    }
+    else {
+        topCircle.y = topCircle.targetY + (topCircle.startY - topCircle.targetY) * easedProgressTop;
+    }
+
+    // 하단 원 (bottomCircle) 업데이트 
+    currentTimeBottom += ANIMATION_SPEED;
+    if (currentTimeBottom >= secondsPerMeasure) {
+        currentTimeBottom = 0.0f;
+    }
+
+    // EaseInOutQuad를 이용한 위치 보정
+    float easedProgressBottom = EaseInOutQuad(currentTimeBottom / secondsPerMeasure);
+    if (!isTopCircleTurn) {
+        bottomCircle.y = bottomCircle.startY + (bottomCircle.targetY - bottomCircle.startY) * easedProgressBottom;
+    }
+    else {
+        bottomCircle.y = bottomCircle.targetY + (bottomCircle.startY - bottomCircle.targetY) * easedProgressBottom;
+    }
+
+    // 원의 x 좌표는 고정
+    topCircle.x = 400;
+    bottomCircle.x = 400;
+}
